@@ -29,6 +29,7 @@ permitted to use potentially disruptive migration modes (PostCopy or Paused) to 
 when pre-copy cannot. This is critical for operations that require migration — such as node drain
 and CPU/memory hotplug — where a non-converging migration would block the operation entirely.
 This allows maintenance operations to complete and in-guest processes to be preserved after migration.
+AWD is configurable at the cluster level through the HyperConverged CR live migration configuration, with the setting propagating to the KubeVirt CR for enforcement.
 
 ---
 
@@ -48,6 +49,7 @@ technology, and testability before formal test planning.
     1. As an admin, I want to migrate a VM with AWD policy so that migration completes in PostCopy or Paused mode when pre-copy cannot converge, without terminating running guest workloads.
     2. As an admin, I want to drain a node for maintenance so that VMs with AWD policy migrate and resume without terminating running guest workloads.
     3. As an admin, I want to hotplug CPU/memory to a running VM so that AWD migration completes and the guest reflects the new resources without terminating running guest workloads.
+    4. As an admin, I want to enable AWD via the HCO CR so that the configuration propagates to the KubeVirt CR and applies cluster-wide.
 
 - [x] **Testability**
   - *Note any requirements that are unclear or untestable:* Testable by configuring an AWD migration policy with a tight completion timeout and capped bandwidth, then verifying the migration mode after migration.
@@ -56,6 +58,7 @@ technology, and testability before formal test planning.
   - *List the acceptance criteria:*
     1. When pre-copy migration does not converge, migration completes successfully in the expected mode (PostCopy or Paused) under AWD policy, regardless of migration trigger or guest operating system.
     2. After migration completes, workloads running in the guest before migration remain active without requiring guest reboot or application restart.
+    3. Setting allowWorkloadDisruption on the HCO CR propagates correctly to the KubeVirt CR migration configuration.
 
 - [x] **Non-Functional Requirements (NFRs)**
   - *List applicable NFRs and their targets:* Monitoring: No new metrics or alerts required. Observability: No new observability requirements; migration mode is visible via existing status fields. UI: No UI component. Documentation: Covered by upstream and product documentation. Performance: No performance targets defined. Security: RBAC covered by core KubeVirt tests. Scalability: No scalability concerns; feature is per-VM.
@@ -80,7 +83,7 @@ The following are confirmed product constraints accepted before testing begins.
   - *List identified challenges:* Triggering Paused mode reliably requires tuning bandwidth, completion timeout, and guest memory load to ensure standard (pre-copy) live migration does not converge before the timeout.
 
 - [x] **API Extensions**
-  - *List new or modified APIs:* New migration policy fields to control disruptive migration behavior and a status field to report the migration mode used.
+  - *List new or modified APIs:* New migration policy fields to control disruptive migration behavior and a status field to report the migration mode used. New allowWorkloadDisruption field in the HCO live migration configuration, propagated to KubeVirt migration settings.
 
 - [x] **Test Environment Needs**
   - *See environment requirements in Section II.3 and testing tools in Section II.3.1*
@@ -94,12 +97,13 @@ This STP serves as the **overall roadmap for testing**, detailing the scope, app
 
 #### **1. Scope of Testing**
 
-Tests validate that allow-workload-disruption (AWD) migration completes in the expected mode (PostCopy or Paused) across different migration triggers (explicit migration, CPU/memory hotplug) and guest operating systems (RHEL, Windows). Node drain is tested with RHEL guests only (see Out of Scope). Guest process preservation — verified by confirming a background process started before migration remains running after migration without restart — is checked after each migration.
+Tests validate that allow-workload-disruption (AWD) migration completes in the expected mode (PostCopy or Paused) across different migration triggers (explicit migration, CPU/memory hotplug) and guest operating systems (RHEL, Windows). Node drain is tested with RHEL guests only (see Out of Scope). Guest process preservation — verified by confirming a background process started before migration remains running after migration without restart — is checked after each migration. Additionally, HCO-to-KubeVirt configuration propagation is validated to ensure AWD can be set via the HCO CR and is correctly reflected in the KubeVirt CR.
 
 **Testing Goals**
 
 - **[P0]** AWD Migration Mode: Verify AWD migration falls back to PostCopy and Paused modes when pre-copy cannot converge, with process preservation.
 - **[P0]** AWD Node Drain: Verify node drain triggers AWD migration in the expected mode with process preservation.
+- **[P0]** AWD HCO Configuration: Verify AWD can be configured via HCO CR and propagates to KubeVirt CR.
 - **[P1]** AWD CPU Hotplug: Verify CPU hotplug triggers AWD migration and guest reports new CPU count with process preservation.
 - **[P1]** AWD Memory Hotplug: Verify memory hotplug triggers AWD migration and guest reports new memory amount with process preservation.
 
@@ -158,10 +162,10 @@ No verification activities will be performed for these items, and any related is
   - *Details:* Upgrade path evaluated; no AWD-specific upgrade concerns identified. Not in scope for this cycle.
 
 - [x] **Dependencies** — Blocked by deliverables from other components/products. Identify what we need from other teams before we can test.
-  - *Details:* Core AWD functionality is implemented in KubeVirt
+  - *Details:* Core AWD functionality is implemented in KubeVirt. HCO propagation of allowWorkloadDisruption is implemented in the HyperConverged Cluster Operator.
 
 - [x] **Cross Integrations** — Does the feature affect other features or require testing by other teams? Identify the impact we cause.
-  - *Details:* AWD interacts with hotplug and node drain (sig-virt); tests cover migration triggered by both
+  - *Details:* AWD interacts with hotplug and node drain (sig-virt); tests cover migration triggered by both. AWD configuration propagation crosses the HCO/KubeVirt boundary and is validated as part of existing strict reconciliation tests.
 
 **Infrastructure**
 
@@ -255,6 +259,10 @@ The following conditions must be met before testing can begin:
 - **[CNV-15235, CNV-16312]** — As an admin, I want memory hotplug to trigger AWD migration and reflect the new memory amount in the guest.
   - *Test Scenario:* [Tier 2] Hotplug memory on VM with AWD policy; verify migration mode, guest memory amount, and process preservation.
   - *Priority:* P1
+
+- **[CNV-16551]** — As an admin, I want to configure AWD via the HCO CR and have it propagate to the KubeVirt CR.
+  - *Test Scenario:* [Tier 2, Gating] Set `allowWorkloadDisruption: true` on HCO `liveMigrationConfig`; verify the value propagates to KubeVirt `spec.configuration.migrations`.
+  - *Priority:* P0
 
 ---
 
