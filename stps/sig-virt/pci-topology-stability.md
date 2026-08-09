@@ -4,19 +4,19 @@
 
 ### **Metadata & Tracking**
 
-- **Enhancement(s):** N/A — downstream regression tests for PCI topology stability
-- **Feature Tracking:** N/A — regression tests, not a feature delivery
+- **Enhancement(s):** N/A — new functional tests for an existing platform guarantee, not a feature delivery
+- **Feature Tracking:** N/A — not a feature delivery
 - **Epic Tracking:** [CNV-81270](https://issues.redhat.com/browse/CNV-81270)
 - **Feature Maturity:**
   - DP: N/A
   - TP: N/A
-  - GA: N/A — regression tests, not a new feature
+  - GA: N/A — not a new feature; tests cover an existing platform guarantee
 - **QE Owner(s):** Samuel Alberstein (@SamAlber)
 - **Owning SIG:** sig-virt
 - **Participating SIGs:** sig-virt
 
 **Document Conventions (if applicable):**
-- PCI fingerprint: An md5 hash of the sorted PCI device addresses visible to the guest, used to detect topology changes across lifecycle operations.
+- PCI device lines: The list of PCI devices visible inside the guest, where each line pairs a device address with its description (e.g. `00:01.0 Ethernet controller: Red Hat, Inc. Virtio 1.0 network device`). Compared before and after lifecycle operations to detect topology changes.
 
 ### **Feature Overview**
 
@@ -24,9 +24,9 @@ When a virtual machine boots, every virtual device (disk, network interface, con
 memory balloon) is assigned a PCI bus address. Guest operating systems rely on these addresses
 being stable across reboots and migrations. If addresses shift, the guest may fail to recognize
 disks, network interfaces, or other devices, leading to application failures or data
-unavailability. This STP covers downstream regression tests
-to ensure PCI topology remains stable across VM lifecycle operations (restart, live migration,
-snapshot/restore) and CNV upgrades.
+unavailability. This STP covers new functional tests that also serve as
+downstream regression coverage to ensure PCI topology remains stable across VM lifecycle
+operations (restart, live migration, snapshot/restore) and CNV upgrades.
 
 ---
 
@@ -41,9 +41,9 @@ snapshot/restore) and CNV upgrades.
   - *Describe the feature's value to customers:* Customers depend on stable device addresses so the guest continues to recognize disks, network interfaces, and other devices after lifecycle operations. Address shifts cause data unavailability and application failures.
   - *List the customer use cases identified:*
     1. As a VM administrator, I want my VM's device addresses to remain unchanged after a restart so that the guest OS continues to recognize all devices.
-    2. As a VM administrator, I want my VM's device addresses to remain unchanged after live migration so that applications continue to function.
-    3. As a VM administrator, I want my VM's device addresses to remain unchanged after restoring from a snapshot so that applications resume with the same device layout.
-    4. As a cluster administrator, I want my VMs' device addresses to remain unchanged after a CNV upgrade so that the upgrade does not disrupt running workloads.
+    2. As a VM administrator, I want my VM's device addresses to remain unchanged after live migration so that the guest OS continues to recognize all devices.
+    3. As a VM administrator, I want my VM's device addresses to remain unchanged after restoring from a snapshot so that the guest OS continues to recognize all devices.
+    4. As a cluster administrator, I want my VMs' device addresses to remain unchanged after a CNV upgrade so that the guest OS continues to recognize all devices.
 
 - [x] **Testability**
   - *Note any requirements that are unclear or untestable:* None. All requirements are testable by capturing PCI device addresses from the guest before and after each operation.
@@ -59,33 +59,37 @@ snapshot/restore) and CNV upgrades.
 - [x] **Non-Functional Requirements (NFRs)**
   - *List applicable NFRs and their targets:*
     - Monitoring: No new metrics or alerts required.
-    - Observability: No dedicated observability tooling. Topology version can be inspected via a VM annotation, but this is not exposed in dashboards or metrics.
-    - Documentation: Developer-facing design documentation exists upstream (`docs/pci-topology.md` in kubevirt/kubevirt). No downstream customer-facing documentation exists — this is an implicit guarantee rather than a documented feature.
-    - Performance: No performance targets; topology assignment is a one-time operation during VM startup with negligible overhead.
+    - Observability: No dedicated observability tooling. The platform tracks topology versioning internally, but this is not exposed in dashboards or metrics.
+    - Documentation: No downstream customer-facing documentation exists — PCI address stability is an implicit platform guarantee rather than a documented feature.
+    - Performance: No performance targets; address assignment is a one-time operation during VM startup with negligible overhead.
     - Security: No security implications.
-    - Scalability: Feature is per-VM; no scale concerns.
+    - Scalability: PCI topology assignment is per-VM. Tests verify single-VM address stability. Platform migration concurrency limits exist but are out of scope for this STP.
   - *Note any NFRs not covered and why:* UI/Usability: No user-facing interface — PCI topology is assigned automatically with no user configuration or interaction; no usability testing applies.
 
 #### **2. Known Limitations**
 
-- **PCI topology management only applies to machine types with PCIe bus hierarchies** (q35 on amd64, virt on arm64). It is skipped for s390x and ppc64le which use different bus topologies.
-  - *Sign-off:* TBD
+- **PCI topology stability applies only to amd64 and arm64 architectures.** It is not supported on s390x and ppc64le, which use different bus topologies.
+  - *Sign-off:* Michael Henriksen (@mhenriks)
 
-- **PCI stability is not guaranteed for hotplugged disks across reboots.** A disk added via hotplug (with persist option) may receive a different PCI address when the VM is rebooted. This is a known current limitation confirmed by a developer.
-  - *Sign-off:* TBD
+- **PCI stability is not guaranteed for hotplugged disks across reboots.** A hotplugged disk may receive a different PCI address when the VM is rebooted. Confirmed by the feature developer.
+  - *Sign-off:* Michael Henriksen (@mhenriks)
 
 #### **3. Technology and Design Review**
 
 - [x] **Developer Handoff/QE Kickoff**
-  - *Key takeaways and concerns:* No formal kickoff — regression test story. Upstream fix and documentation reviewed independently. Test plan confirmed with developer; hotplug disk address instability across reboots confirmed as a known limitation.
+  - *Key takeaways and concerns:*
+    - No formal kickoff — these tests cover an existing platform guarantee rather than a new feature. Fix and upstream documentation reviewed independently with the feature developer.
+    - Hotplugged disks may receive different PCI addresses after a reboot — tests must not include hotplug-then-reboot scenarios.
+    - PCI topology stability applies only to amd64 and arm64 architectures; s390x and ppc64le use different bus topologies and are excluded from testing.
+    - Verification must be done from inside the guest; host-side metadata exists but does not guarantee the guest sees the same layout.
 
 - [x] **Technology Challenges**
-  - *List identified challenges:* Verification requires running commands inside the guest OS to observe the assigned addresses — there is no host-side API that exposes the guest-visible topology.
-  - *Impact on testing approach:* Tests must SSH into the guest and parse device enumeration output.
+  - *List identified challenges:* Guest must be reachable and have device-listing tools installed; images without these tools cannot be tested.
+  - *Impact on testing approach:* Tests depend on guest connectivity and standard RHEL images that include the required tools.
 
 - [x] **API Extensions**
-  - *List new or modified APIs:* No new user-facing APIs. Topology version is tracked internally by the platform.
-  - *Testing impact:* Annotation presence and versioning are covered by upstream tests; downstream tests focus on the user-visible outcome (stable addresses).
+  - *List new or modified APIs:* No new user-facing APIs. Topology versioning is managed internally by the platform.
+  - *Testing impact:* Internal versioning is covered by upstream tests; downstream tests focus on the user-visible outcome (stable addresses).
 
 - [x] **Test Environment Needs**
   - *See environment requirements in Section II.3 and testing tools in Section II.3.1*
@@ -103,61 +107,71 @@ This STP serves as the **overall roadmap for testing**, detailing the scope, app
 #### **1. Scope of Testing**
 
 Tests validate that PCI device addresses remain stable across VM lifecycle operations
-and CNV upgrades. Verification is done by capturing a PCI fingerprint from the guest
-before and after operations and comparing them.
+and CNV upgrades. Verification is done by capturing PCI device lines
+from the guest before and after operations and comparing them.
+
+**Test VM Configuration:** A standard RHEL VM already includes a broad mix of PCI
+device types (e.g., virtio network and block devices, chipset controllers, PCIe
+root ports, memory balloon) without requiring a custom specification. No special
+VM configuration is needed — the default topology provides sufficient device
+diversity to exercise PCI address stability.
 
 **Testing Goals**
 
-- **[P0]** As a VM administrator, I can restart my VM and all device addresses remain unchanged, so the guest OS continues to recognize all devices.
-- **[P0]** As a VM administrator, I can live-migrate my VM to another node and all device addresses remain unchanged, so applications continue to function.
-- **[P0]** As a VM administrator, I can restore my VM from a snapshot and all device addresses remain unchanged, so applications resume with the same device layout.
-- **[P0]** As a cluster administrator, I can upgrade CNV and all VMs' device addresses remain unchanged, so the upgrade does not disrupt running workloads.
+- **[P0]** On amd64 and arm64, boot a RHEL VM, capture PCI device lines from inside the guest, stop and start the VM, recapture, and confirm every address+description pair is unchanged.
+- **[P0]** On a multi-worker amd64 or arm64 cluster, boot a RHEL VM, capture PCI device lines from inside the guest, live-migrate the VM to another worker, recapture, and confirm every address+description pair is unchanged.
+- **[P0]** On snapshot-capable storage, boot a RHEL VM, capture PCI device lines from inside the guest, take a snapshot and restore, recapture, and confirm every address+description pair is unchanged.
+- **[P0]** Capture PCI device lines from inside each RHEL upgrade-lane VM before a CNV upgrade, complete the upgrade, recapture, and confirm every address+description pair is unchanged.
 
 **Out of Scope (Testing Scope Exclusions)**
 
-- **Topology version annotation presence**
-  - *Rationale:* Fully covered by upstream functional tests (annotation set during VM creation and template processing).
-  - *PM/Lead Agreement:* TBD
+- **Internal topology versioning**
+  - *Rationale:* The platform tracks topology versions internally. Versioning correctness (which version is assigned, how versions behave differently) is fully covered by upstream functional tests.
+  - *PM/Lead Agreement:* Michael Henriksen (@mhenriks)
 
-- **Backward compatibility (v2/v3)**
-  - *Rationale:* Fully covered by upstream functional tests (v2 frozen slot count preserves addresses across restart, v2 produces different addresses than v3, annotation propagation during template processing).
-  - *PM/Lead Agreement:* TBD
+- **Backward compatibility between topology versions**
+  - *Rationale:* Fully covered by upstream functional tests — existing VMs keep their assigned topology version and address layout.
+  - *PM/Lead Agreement:* Michael Henriksen (@mhenriks)
 
 - **PCI stability after hotplug and reboot**
   - *Rationale:* PCI stability is not guaranteed for hotplugged disks across reboots. Confirmed by feature developer.
-  - *PM/Lead Agreement:* TBD
+  - *PM/Lead Agreement:* Michael Henriksen (@mhenriks)
 
 - **Windows-specific PCI verification**
-  - *Rationale:* PCI topology is assigned on the host side identically for all guest OSes. Linux verification is sufficient.
-  - *PM/Lead Agreement:* TBD
+  - *Rationale:* Validation uses RHEL guests only. Windows PCI verification is excluded here as a QE scope decision.
+  - *PM/Lead Agreement:* Denys Shchedrivyi (@dshchedr)
 
 - **s390x and ppc64le architectures**
-  - *Rationale:* These architectures use different bus topologies. PCI topology management is explicitly skipped upstream.
-  - *PM/Lead Agreement:* TBD
+  - *Rationale:* These architectures use different bus topologies. PCI topology stability does not apply to them.
+  - *PM/Lead Agreement:* Michael Henriksen (@mhenriks)
+
+- **Negative/failure-path scenarios (e.g., behavior when PCI addresses shift)**
+  - *Rationale:* This STP verifies addresses remain stable. There is no user-facing error handling or recovery mechanism to test; if addresses shift, it is a platform bug surfaced by these tests. No degraded-mode or fallback behavior exists for the user.
+  - *PM/Lead Agreement:* Michael Henriksen (@mhenriks)
 
 **Test Limitations**
 
-- **PCI fingerprint verification depends on device enumeration tools being available in the guest image.** The standard RHEL and Fedora images include these tools.
-  - *Sign-off:* TBD
+- **PCI device enumeration depends on device-listing tools being available in the guest image.** The standard RHEL images include these tools.
+  - *Sign-off:* Denys Shchedrivyi (@dshchedr)
 
 - **Snapshot/restore tests require a storage class that supports volume snapshots.**
-  - *Sign-off:* TBD
+  - *Sign-off:* Denys Shchedrivyi (@dshchedr)
 
 #### **2. Test Strategy**
 
 **Functional**
 
 - [x] **Functional Testing** — Validates that the feature works according to specified requirements and user stories
-  - *Details:* Validates that PCI device addresses remain stable across VM lifecycle operations (restart, migration, snapshot/restore) and CNV upgrades. Each test captures a PCI fingerprint before and after the operation and asserts they match.
+  - *Details:* Validates that PCI device addresses remain stable across VM lifecycle operations (restart, migration, snapshot/restore) and CNV upgrades. Each test captures PCI device lines from the guest before and after the operation and asserts they match.
 
 - [x] **Automation Testing** — Confirms test automation plan is in place for CI and regression coverage (all tests are expected to be automated)
   - *Details:* Lifecycle tests in `tests/virt/node/general/`, upgrade test in `tests/virt/upgrade/`.
 
 - [x] **Regression Testing** — Verifies that new changes do not break existing functionality
-  - *Details:* These tests are themselves regression guards. Run as part of standard Tier 2 CI. Upgrade test runs in upgrade CI lane.
+  - *Details:* After merge, these tests provide regression coverage in standard Tier 2 CI. Upgrade test runs in the upgrade CI lane.
 
 - [ ] **Self-Validation Testing** — Should any of the new tests be included in the self-validation test package?
-  - *Details:* N/A — PCI topology stability is a regression guard, not a core operational scenario for self-validation.
+  - *Details:* N/A — PCI topology stability is not a core operational scenario for the self-validation package.
 
 **Non-Functional**
 
@@ -165,7 +179,7 @@ before and after operations and comparing them.
   - *Details:* N/A — No performance impact; topology assignment is a one-time operation during VM startup.
 
 - [ ] **Scale Testing** — Validates feature behavior under increased load and at production-like scale
-  - *Details:* N/A — Feature is per-VM; no scale concerns.
+  - *Details:* N/A — PCI topology assignment is per-VM with no additional scale constraints. Platform migration concurrency limits are out of scope for this STP.
 
 - [ ] **Security Testing** — Verifies security requirements, RBAC, authentication, authorization, and vulnerability scanning
   - *Details:* N/A — No RBAC surface or security implications.
@@ -178,14 +192,14 @@ before and after operations and comparing them.
 
 **Integration & Compatibility**
 
-- [ ] **Compatibility Testing** — Ensures feature works across supported platforms, versions, and configurations
-  - *Details:* N/A — Tests are architecture-agnostic and run on both amd64 and arm64 clusters as part of sig-virt's standard CI (`--cpu-arch=arm64`). No dedicated multiarch (cross-architecture) tests or scheduled lanes.
+- [x] **Compatibility Testing** — Ensures feature works across supported platforms, versions, and configurations
+  - *Details:* Tests run on both amd64 and arm64 clusters as part of sig-virt's standard CI. No dedicated multiarch (cross-architecture) tests or scheduled lanes — architecture coverage comes from existing CI topology.
 
 - [x] **Upgrade Testing** — Validates upgrade paths from previous versions, data migration, and configuration preservation
-  - *Details:* Dedicated upgrade test captures PCI fingerprints before and verifies they are unchanged after upgrade.
+  - *Details:* Dedicated upgrade test captures PCI device lines before and verifies they are unchanged after upgrade.
 
 - [x] **Dependencies** — Blocked by deliverables from other components/products
-  - *Details:* Core PCI topology logic is implemented upstream; snapshot depends on the storage operator.
+  - *Details:* PCI topology stability depends on upstream platform logic; snapshot tests depend on the storage operator.
 
 - [x] **Cross Integrations** — Does the feature affect other features or require testing by other teams?
   - *Details:* Snapshot/restore scenario depends on the storage operator for volume snapshot support. Storage operator availability is an environment prerequisite, not a cross-SIG test responsibility.
@@ -198,7 +212,7 @@ before and after operations and comparing them.
 #### **3. Test Environment**
 
 - **Cluster Topology:** 3-master/3-worker bare-metal (2 workers minimum for migration tests)
-- **OCP & OpenShift Virtualization Version(s):** OCP 4.22 and later with OpenShift Virtualization 4.22 and later (v3 topology fix lands in 4.22; lifecycle tests validate a contract expected on any version, but the upgrade test specifically targets the v2→v3 transition)
+- **OCP & OpenShift Virtualization Version(s):** OCP 4.22 and later with OpenShift Virtualization 4.22 and later (topology stability fix is available in 4.22; lifecycle tests validate address stability on any version, and the upgrade test validates that addresses are preserved across the upgrade)
 - **CPU Virtualization:** VT-x / AMD-V — required for VM execution
 - **Compute Resources:** Standard — no special compute requirements
 - **Special Hardware:** N/A
@@ -220,21 +234,18 @@ The following conditions must be met before testing can begin:
 
 - [x] Requirements and design documents are **approved and merged**
 - [x] Test environment can be **set up and configured** (see Section II.3 - Test Environment)
-- [x] PCI topology fix is available and functional in the target CNV version
-- [x] Snapshot APIs are available (for snapshot/restore scenario)
+- [x] PCI topology stability fix is available and functional in the target OpenShift Virtualization version
+- [x] Snapshot support is available (for snapshot/restore scenario)
 
 #### **5. Risks**
 
 **Timeline/Schedule**
 
-- **Mitigation:** Tests depend on the upstream PCI topology fix (already merged) and ODF for snapshot storage (standard infrastructure, already available in CI). No deliverables are blocking test development or execution.
+- **Mitigation:** Tests depend on the PCI topology stability fix (already merged) and ODF for snapshot storage (standard infrastructure, already available in CI). No deliverables are blocking test development or execution.
 
 **Test Coverage**
 
-- **Risk:** PCI fingerprint captures only device addresses, not which specific device is at which address. A bug that swaps two addresses would not be detected.
-  - **Mitigation:** Sufficient for regression detection. Exact device-to-address mapping is covered by upstream unit tests.
-  - *Areas with reduced coverage:* Device-to-address mapping (covered upstream).
-  - *Sign-off:* TBD
+- **Mitigation:** Each captured line pairs a device address with its device description. A swap between devices with distinct descriptions is detected. A swap between two devices with the same description (for example two identical NICs) would not change the captured set and would not be detected. Test VMs use one device of each type, so that case does not arise in these scenarios.
 
 **Test Environment**
 
@@ -250,29 +261,29 @@ The following conditions must be met before testing can begin:
 
 **Dependencies**
 
-- **Risk:** PCI topology behavior depends on upstream device-address allocation logic. Upstream changes could reintroduce address shifts.
-  - **Mitigation:** Monitor upstream changes to device-address allocation and hotplug port handling. These tests serve as the downstream regression guard.
-  - *Dependent teams or components:* Upstream KubeVirt compute stack.
-  - *Sign-off:* TBD
+- **Risk:** PCI topology behavior depends on upstream address-assignment logic. Upstream changes could reintroduce address shifts.
+  - **Mitigation:** Monitor upstream changes to address assignment. These tests are the downstream check that address shifts have not been reintroduced.
+  - *Dependent teams or components:* Upstream platform compute stack.
+  - *Sign-off:* Denys Shchedrivyi (@dshchedr)
 
 ---
 
 ### **III. Test Scenarios & Traceability**
 
 - **[CNV-16326]** — As a VM administrator, I want my VM's device addresses to remain stable after restart.
-  - *Test Scenario:* [Tier 2] Boot a VM, capture PCI fingerprint, stop and start the VM, capture fingerprint again, verify they match.
+  - *Test Scenario:* [Tier 2] Boot a VM, capture PCI device lines, stop and start the VM, wait until the VM is Running and the guest is reachable, capture PCI device lines again, verify they match.
   - *Priority:* P0
 
 - **[CNV-16327]** — As a VM administrator, I want my VM's device addresses to remain stable after live migration.
-  - *Test Scenario:* [Tier 2] Boot a VM, capture PCI fingerprint, live-migrate the VM to another node, capture fingerprint again, verify they match.
+  - *Test Scenario:* [Tier 2] Boot a VM, capture PCI device lines, live-migrate the VM to another node, wait until migration completes and the VM is Running on the target node, capture PCI device lines again, verify they match.
   - *Priority:* P0
 
 - **[CNV-16328]** — As a VM administrator, I want my VM's device addresses to remain stable after snapshot restore.
-  - *Test Scenario:* [Tier 2] Boot a VM, capture PCI fingerprint, take a snapshot, restore the VM from the snapshot, capture fingerprint again, verify they match.
+  - *Test Scenario:* [Tier 2] Boot a VM, capture PCI device lines, take a snapshot, restore the VM from the snapshot, wait until the restored VM is Running and the guest is reachable, capture PCI device lines again, verify they match.
   - *Priority:* P0
 
 - **[CNV-16329]** — As a cluster administrator, I want my VMs' device addresses to remain stable after a CNV upgrade.
-  - *Test Scenario:* [Tier 2] Capture PCI fingerprints for all upgrade VMs before CNV upgrade, perform the upgrade, capture fingerprints again, verify they match.
+  - *Test Scenario:* [Tier 2] Capture PCI device lines for all upgrade VMs before CNV upgrade, perform the upgrade, wait until the upgrade completes and cluster health checks pass, capture PCI device lines again, verify they match.
   - *Priority:* P0
 
 ---
@@ -284,17 +295,12 @@ This Software Test Plan requires approval from the following stakeholders:
 * **Reviewers:**
   - QE Architect (OCP-V): [Ruth Netser](@rnetser)
   - QE Members (OCP-V): [Akriti Gupta](@akri3i), [Samuel Alberstein](@SamAlber)
-  - Principal QE (OCP-V): [Den Shchedrivyi](@dshchedr), [Vasiliy Sibirskiy](@vsibirsk)
-  - Principal Developer (OCP-V): [Jean-Edouard Babin](@jean-edouard)
+  - Principal QE (OCP-V): [Denys Shchedrivyi](@dshchedr), [Vasiliy Sibirskiy](@vsibirsk)
+  - Principal Developer (OCP-V): [Jed Lejosne](@jean-edouard), [Michael Henriksen](@mhenriks)
   - Product Manager/Owner: [Martin Tessun](@mtessun)
 
 * **Approvers:**
   - QE Architect (OCP-V): [Ruth Netser](@rnetser)
-  - Principal QE (OCP-V): [Den Shchedrivyi](@dshchedr), [Vasiliy Sibirskiy](@vsibirsk)
-
-**Sign-off checklist:**
-
-- [x] Tier 1 / Tier 2 tests defined and traceability matrix updated.
-- [ ] **Automation merged** (mandatory for GA).
-- [ ] Tests running in release checklist jobs.
-- [ ] Documentation reviewed.
+  - Principal QE (OCP-V): [Denys Shchedrivyi](@dshchedr), [Vasiliy Sibirskiy](@vsibirsk)
+  - Principal Developer (OCP-V): [Michael Henriksen](@mhenriks)
+  - Product Manager/Owner: [Martin Tessun](@mtessun)
